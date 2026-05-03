@@ -1,27 +1,32 @@
 --[[
-    AUTO-POLICIAL MAD CITY CHAPTER 1 - COMPLETO
-    - Persegue criminosos (Team Criminals)
-    - Pressiona E por 0.6s para prender
-    - GUI mostra níveis e dinheiro ganhos (persistente)
-    - Se menos de 3 criminosos, troca de servidor (server hop)
-    - Velocidades otimizadas
-    - Persistência de ganhos via arquivo
+    AUTO-POLICIAL MAD CITY - VERSÃO FINAL
+    - Movimento suave com TweenService (subir, voar horizontal, descer, grudar)
+    - Segura a tecla E por 0.5s para prender (simula prompt)
+    - GUI persistente: mostra níveis e dinheiro GANHOS desde o início
+    - Menos de 3 criminosos no servidor: troca automaticamente (server hop)
+    - Ganhos salvos em arquivo, continuam após teleporte (Loader reexecuta)
 --]]
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 -- ===================== CONFIGURAÇÕES =====================
 local ALTURA_VOO = 200
-local VEL_VOO = 400
-local VEL_SUBIDA = 200
-local VEL_DESCIDA = 150
+local VEL_VOO = 300
+local VEL_SUBIDA = 150
+local VEL_DESCIDA = 120
 local TEMPO_GRUDE_MAX = 5
-local TEMPO_SEGURAR_E = 0.6
+local INTERVALO_PRENDE = 0.8      -- a cada 0.8s tenta prender
+local TEMPO_SEGURAR_E = 0.5       -- segura E por 0.5s
 local MIN_CRIMINOSOS = 3
 local CHECK_INTERVAL = 30
 
 local SAVE_FILE = "MadCity_Gains.txt"
-local SCRIPT_NAME = "AutoPolice"
 
--- ===================== PERSISTÊNCIA =====================
+-- ===================== PERSISTÊNCIA DE GANHOS =====================
 local gains = { totalLevelGain = 0, totalMoneyGain = 0, startTime = nil }
 
 local function saveGains()
@@ -55,37 +60,39 @@ local function loadGains()
     saveGains()
 end
 
--- ===================== SERVER HOP =====================
-local function serverHop()
-    local count = 0
-    for _, p in ipairs(game.Players:GetPlayers()) do
-        if p.Team and p.Team.Name == "Criminals" then
-            count = count + 1
-        end
+-- ===================== FUNÇÕES DE OBTENÇÃO DE DADOS =====================
+local function getCurrentRank()
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if leaderstats then
+        local rankStat = leaderstats:FindFirstChild("Rank")
+        if rankStat then return rankStat.Value end
+        local levelStat = leaderstats:FindFirstChild("Level")
+        if levelStat then return levelStat.Value end
     end
-    if count >= MIN_CRIMINOSOS then return false end
-    
-    print("[Hop] Apenas " .. count .. " criminoso(s). Trocando de servidor...")
-    saveGains()
-    -- O loader na AutoExec vai reexecutar este script automaticamente
-    game:GetService("TeleportService"):Teleport(game.PlaceId)
-    return true
+    return 0
+end
+
+local function getCurrentMoney()
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    if leaderstats then
+        local cash = leaderstats:FindFirstChild("Cash") or leaderstats:FindFirstChild("Money")
+        if cash then return cash.Value end
+    end
+    return 0
 end
 
 -- ===================== GUI DE GANHOS =====================
 local function createGainsGUI()
-    local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
     local GUI_NAME = "GainsGUI_MadCity"
-    local gui = LocalPlayer.PlayerGui:FindFirstChild(GUI_NAME)
-    if gui then gui:Destroy() end
+    local oldGui = LocalPlayer.PlayerGui:FindFirstChild(GUI_NAME)
+    if oldGui then oldGui:Destroy() end
 
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = GUI_NAME
     screenGui.Parent = LocalPlayer.PlayerGui
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 250, 0, 120)
+    frame.Size = UDim2.new(0, 260, 0, 110)
     frame.Position = UDim2.new(0, 10, 0, 10)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
     frame.BackgroundTransparency = 0.2
@@ -95,7 +102,7 @@ local function createGainsGUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 25)
     title.BackgroundTransparency = 1
-    title.Text = "📈 GANHOS (desde o início)"
+    title.Text = "📈 GANHOS (desde início)"
     title.TextColor3 = Color3.fromRGB(255, 200, 0)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 14
@@ -137,25 +144,45 @@ local function createGainsGUI()
     return { levelLabel = levelLabel, moneyLabel = moneyLabel, uptimeLabel = uptimeLabel }
 end
 
--- ===================== FUNÇÕES AUXILIARES =====================
-local function getCurrentRank()
-    local leaderstats = game.Players.LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats then
-        local rankStat = leaderstats:FindFirstChild("Rank")
-        if rankStat then return rankStat.Value end
+-- ===================== MOVIMENTO (TWEEN - MESMO DO SCRIPT FUNCIONAL) =====================
+local function disableCollision(char)
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
     end
-    return 0
 end
 
-local function getCurrentMoney()
-    local leaderstats = game.Players.LocalPlayer:FindFirstChild("leaderstats")
-    if leaderstats then
-        local cash = leaderstats:FindFirstChild("Cash") or leaderstats:FindFirstChild("Money")
-        if cash then return cash.Value end
-    end
-    return 0
+local function moverPara(root, posAlvo, duracao)
+    local tween = TweenService:Create(root, TweenInfo.new(duracao, Enum.EasingStyle.Linear), {CFrame = CFrame.new(posAlvo)})
+    tween:Play()
+    tween.Completed:Wait()
 end
 
+local function subir(root)
+    local posAtual = root.Position
+    if posAtual.Y >= ALTURA_VOO - 10 then return end
+    local posAlvo = Vector3.new(posAtual.X, ALTURA_VOO, posAtual.Z)
+    local dist = (posAlvo - posAtual).Magnitude
+    moverPara(root, posAlvo, dist / VEL_SUBIDA)
+end
+
+local function moverHorizontal(root, destinoXZ)
+    local posAtual = root.Position
+    local posAlvo = Vector3.new(destinoXZ.X, ALTURA_VOO, destinoXZ.Z)
+    local dist = (posAlvo - posAtual).Magnitude
+    if dist < 1 then return end
+    moverPara(root, posAlvo, dist / VEL_VOO)
+end
+
+local function descer(root, posFinal)
+    local posAtual = root.Position
+    local dist = (posAtual.Y - posFinal.Y)
+    if dist <= 0 then return end
+    moverPara(root, posFinal, dist / VEL_DESCIDA)
+end
+
+-- ===================== AÇÕES DE TIME E TECLAS =====================
 local function joinPolice()
     local RemoteFunction = game:GetService("ReplicatedStorage"):FindFirstChild("RemoteFunction")
     if RemoteFunction then
@@ -165,16 +192,15 @@ local function joinPolice()
 end
 
 local function selectSlot3()
-    local VirtualInputManager = game:GetService("VirtualInputManager")
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+        print("[Auto] Tecla '3' pressionada")
     end)
 end
 
 local function segurarTeclaE()
-    local VirtualInputManager = game:GetService("VirtualInputManager")
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(TEMPO_SEGURAR_E)
@@ -182,22 +208,25 @@ local function segurarTeclaE()
     end)
 end
 
--- ===================== SISTEMA DE PERSEGUIÇÃO =====================
+-- ===================== DETECÇÃO E PERSEGUIÇÃO =====================
 local function isCriminal(player)
-    return player ~= game.Players.LocalPlayer and player.Team and player.Team.Name == "Criminals"
+    if player == LocalPlayer then return false end
+    return player.Team and player.Team.Name == "Criminals"
 end
 
 local function getNearestCriminal()
-    local char = game.Players.LocalPlayer.Character
+    local char = LocalPlayer.Character
     if not char then return nil end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return nil end
-    local nearest, nearestDist = nil, math.huge
-    for _, p in ipairs(game.Players:GetPlayers()) do
+    local pos = root.Position
+    local nearest = nil
+    local nearestDist = math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
         if isCriminal(p) and p.Character then
             local targetRoot = p.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
-                local dist = (targetRoot.Position - root.Position).Magnitude
+                local dist = (targetRoot.Position - pos).Magnitude
                 if dist < nearestDist then
                     nearestDist = dist
                     nearest = p
@@ -209,65 +238,91 @@ local function getNearestCriminal()
 end
 
 local function perseguirCriminoso(criminal)
-    local char = game.Players.LocalPlayer.Character
+    local char = LocalPlayer.Character
     if not char then return false end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
-    
+
     print("[Auto] Perseguindo " .. criminal.Name)
-    
+
     -- Subir
-    local posAlvo = Vector3.new(root.Position.X, ALTURA_VOO, root.Position.Z)
-    root.CFrame = CFrame.new(posAlvo)
+    subir(root)
     task.wait(0.1)
-    
-    -- Voo horizontal
-    while criminal.Character and isCriminal(criminal) do
-        local tr = criminal.Character:FindFirstChild("HumanoidRootPart")
-        if not tr then break end
-        local targetPos = Vector3.new(tr.Position.X, ALTURA_VOO, tr.Position.Z)
-        root.CFrame = CFrame.new(targetPos)
-        if (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(tr.Position.X, 0, tr.Position.Z)).Magnitude < 10 then
+
+    -- Voo horizontal (segue o alvo)
+    repeat
+        if not criminal.Character then return false end
+        local targetRoot = criminal.Character:FindFirstChild("HumanoidRootPart")
+        if not targetRoot then return false end
+        local posCrim = targetRoot.Position
+        moverHorizontal(root, Vector3.new(posCrim.X, ALTURA_VOO, posCrim.Z))
+        task.wait(0.05)
+        if (Vector3.new(root.Position.X, 0, root.Position.Z) - Vector3.new(posCrim.X, 0, posCrim.Z)).Magnitude < 10 then
             break
         end
-        task.wait(0.05)
-    end
-    
+    until not criminal.Character or not isCriminal(criminal)
+
     -- Descer
     if not criminal.Character then return false end
-    local tr = criminal.Character:FindFirstChild("HumanoidRootPart")
-    if not tr then return false end
-    local posDescer = tr.Position + Vector3.new(0, 2, 0)
-    root.CFrame = CFrame.new(posDescer)
+    local targetRoot = criminal.Character:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return false end
+    descer(root, targetRoot.Position + Vector3.new(0, 2, 0))
     task.wait(0.1)
-    
-    -- Grudar e prender
+
+    -- Grudar + prender (E)
     local inicio = tick()
+    local ultimoPrende = 0
     while isCriminal(criminal) and tick() - inicio < TEMPO_GRUDE_MAX do
         if not criminal.Character then break end
-        local tr2 = criminal.Character:FindFirstChild("HumanoidRootPart")
-        if not tr2 then break end
-        root.CFrame = CFrame.new(tr2.Position + Vector3.new(0, 1.5, 1.5))
-        segurarTeclaE()
-        task.wait(0.2)
+        local tr = criminal.Character:FindFirstChild("HumanoidRootPart")
+        if not tr then break end
+        local posAlvo = tr.Position + Vector3.new(0, 1.5, 1.5)
+        root.CFrame = CFrame.new(posAlvo)
+
+        local agora = tick()
+        if agora - ultimoPrende >= INTERVALO_PRENDE then
+            segurarTeclaE()
+            ultimoPrende = agora
+        end
+        task.wait(0.1)
+    end
+
+    if not isCriminal(criminal) then
+        print("[Auto] " .. criminal.Name .. " foi preso!")
+    else
+        print("[Auto] Tempo de perseguição esgotado para " .. criminal.Name)
     end
     return true
 end
 
--- ===================== INICIALIZAÇÃO =====================
-print("[Auto] Iniciando Auto-Policial Mad City...")
+-- ===================== SERVER HOP =====================
+local function serverHop()
+    local count = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isCriminal(p) then count = count + 1 end
+    end
+    if count >= MIN_CRIMINOSOS then return false end
 
+    print("[Hop] Apenas " .. count .. " criminoso(s). Trocando de servidor...")
+    saveGains()
+    -- O Loader na pasta AutoExec reexecutará este script automaticamente
+    game:GetService("TeleportService"):Teleport(game.PlaceId)
+    return true
+end
+
+-- ===================== INICIALIZAÇÃO E LOOP PRINCIPAL =====================
+-- Carregar ganhos anteriores
 loadGains()
-local startTime = gains.startTime
+
+-- Valores iniciais para cálculo de ganhos
 local initialRank = getCurrentRank()
 local initialMoney = getCurrentMoney()
 local totalLevelGain = gains.totalLevelGain
 local totalMoneyGain = gains.totalMoneyGain
+local startTime = gains.startTime
 
--- Criar GUI
-local guiLabels = createGainsGUI()
-
--- Loop de atualização da GUI
+-- Criar GUI e atualizar em loop
+local gui = createGainsGUI()
 spawn(function()
     while true do
         local currentRank = getCurrentRank()
@@ -277,50 +332,46 @@ spawn(function()
         gains.totalLevelGain = totalLevelGain
         gains.totalMoneyGain = totalMoneyGain
         saveGains()
-        
-        if guiLabels.levelLabel then
-            guiLabels.levelLabel.Text = "⭐ Nível ganho: +" .. totalLevelGain
+
+        if gui.levelLabel then
+            gui.levelLabel.Text = "⭐ Nível ganho: +" .. totalLevelGain
         end
-        if guiLabels.moneyLabel then
-            guiLabels.moneyLabel.Text = "💰 Dinheiro ganho: +$" .. totalMoneyGain
+        if gui.moneyLabel then
+            gui.moneyLabel.Text = "💰 Dinheiro ganho: +$" .. totalMoneyGain
         end
-        if guiLabels.uptimeLabel then
+        if gui.uptimeLabel then
             local elapsed = tick() - startTime
             local minutes = math.floor(elapsed / 60)
             local seconds = math.floor(elapsed % 60)
-            guiLabels.uptimeLabel.Text = string.format("⏱️ Tempo: %02d:%02d", minutes, seconds)
+            gui.uptimeLabel.Text = string.format("⏱️ Tempo: %02d:%02d", minutes, seconds)
         end
         task.wait(2)
     end
 end)
 
--- Aguardar personagem
-local character = game.Players.LocalPlayer.Character or game.Players.LocalPlayer.CharacterAdded:Wait()
-for _, part in ipairs(character:GetDescendants()) do
-    if part:IsA("BasePart") then
-        part.CanCollide = false
-    end
-end
+-- Aguardar personagem e desabilitar colisão
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+disableCollision(character)
 
--- Entrar na polícia e equipar slot 3
+-- Configurar time e slot 3
 joinPolice()
 task.wait(0.5)
 selectSlot3()
 task.wait(0.5)
 
--- Loop de verificação de servidor
+print("[Auto] Iniciado. Movimento Tween, segura E por " .. TEMPO_SEGURAR_E .. "s. Server hop ativo (min criminosos: " .. MIN_CRIMINOSOS .. ")")
+
+-- Verificador periódico de quantidade de criminosos
 spawn(function()
     while true do
         task.wait(CHECK_INTERVAL)
         local count = 0
-        for _, p in ipairs(game.Players:GetPlayers()) do
-            if isCriminal(p) then
-                count = count + 1
-            end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if isCriminal(p) then count = count + 1 end
         end
-        if count < MIN_CRIMINOSOS and count >= 0 then
-            local hopped = serverHop()
-            if hopped then break end
+        if count < MIN_CRIMINOSOS then
+            serverHop()
+            break
         end
     end
 end)
@@ -332,6 +383,7 @@ while true do
         print("[Auto] Alvo: " .. criminal.Name .. " (distância " .. math.floor(dist) .. ")")
         perseguirCriminoso(criminal)
     else
-        task.wait(0.5)
+        print("[Auto] Nenhum criminoso. Aguardando...")
+        task.wait(1)
     end
 end
