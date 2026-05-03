@@ -1,8 +1,7 @@
 --[[
-    AUTO-POLICIAL MAD CITY - VERSÃO COM CARREGAMENTO ROBUSTO
-    - Aguarda o jogo carregar completamente (personagem, leaderstats, time)
-    - Após server hop, espera 5-6 segundos antes de prosseguir
-    - Movimento Tween, segura E, server hop automático, persistência total
+    AUTO-POLICIAL MAD CITY - VERSÃO FINAL (COM ESPERA INICIAL)
+    - Aguarda 6 segundos antes de iniciar (para carregamento após server hop)
+    - Todo o resto permanece idêntico à versão que funciona.
 --]]
 
 local Players = game:GetService("Players")
@@ -11,30 +10,32 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
+-- ===================== ESPERA INICIAL (RESOLVE O CARREGAMENTO APÓS SERVER HOP) =====================
+print("[Auto] Aguardando 6 segundos para carregamento completo do servidor...")
+task.wait(6)
+print("[Auto] Continuando...")
+
 -- ===================== CONFIGURAÇÕES =====================
 local ALTURA_VOO = 200
 local VEL_VOO = 300
 local VEL_SUBIDA = 150
 local VEL_DESCIDA = 120
 local TEMPO_GRUDE_MAX = 5
-local INTERVALO_PRENDE = 0.8
-local TEMPO_SEGURAR_E = 0.5
+local INTERVALO_PRENDE = 0.8      -- a cada 0.8s tenta prender
+local TEMPO_SEGURAR_E = 0.5       -- segura E por 0.5s
 local MIN_CRIMINOSOS = 3
 local CHECK_INTERVAL = 30
-local TEMPO_ESPERA_CARREGAR = 6  -- segundos após teleporte
 
 local SAVE_FILE = "MadCity_Gains.txt"
 
--- ===================== PERSISTÊNCIA TOTAL =====================
-local gains = { totalLevelGain = 0, totalMoneyGain = 0, startTime = nil, initialRank = nil, initialMoney = nil }
+-- ===================== PERSISTÊNCIA DE GANHOS =====================
+local gains = { totalLevelGain = 0, totalMoneyGain = 0, startTime = nil }
 
 local function saveGains()
     if writefile then
-        local data = string.format("%d,%d,%d,%d,%d",
-            gains.totalLevelGain, gains.totalMoneyGain,
-            gains.startTime or tick(),
-            gains.initialRank or 0, gains.initialMoney or 0)
+        local data = string.format("%d,%d,%d", gains.totalLevelGain, gains.totalMoneyGain, gains.startTime or tick())
         writefile(SAVE_FILE, data)
+        print("[Persist] Ganhos salvos: Level +" .. gains.totalLevelGain .. ", Money +" .. gains.totalMoneyGain)
     end
 end
 
@@ -46,32 +47,29 @@ local function loadGains()
             for part in string.gmatch(data, "[^,]+") do
                 table.insert(parts, tonumber(part))
             end
-            if #parts >= 5 then
+            if #parts >= 3 then
                 gains.totalLevelGain = parts[1] or 0
                 gains.totalMoneyGain = parts[2] or 0
                 gains.startTime = parts[3] or tick()
-                gains.initialRank = parts[4]
-                gains.initialMoney = parts[5]
+                print("[Persist] Ganhos carregados: Level +" .. gains.totalLevelGain .. ", Money +" .. gains.totalMoneyGain)
                 return
             end
         end
     end
-    -- Primeira execução: será preenchido após o jogo carregar
     gains.totalLevelGain = 0
     gains.totalMoneyGain = 0
     gains.startTime = tick()
-    gains.initialRank = nil
-    gains.initialMoney = nil
+    saveGains()
 end
 
--- ===================== FUNÇÕES DE OBTENÇÃO (COM SEGURANÇA) =====================
+-- ===================== FUNÇÕES DE OBTENÇÃO DE DADOS =====================
 local function getCurrentRank()
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
     if leaderstats then
-        local rankStat = leaderstats:FindFirstChild("Rank") or leaderstats:FindFirstChild("Level")
-        if rankStat then
-            return rankStat.Value
-        end
+        local rankStat = leaderstats:FindFirstChild("Rank")
+        if rankStat then return rankStat.Value end
+        local levelStat = leaderstats:FindFirstChild("Level")
+        if levelStat then return levelStat.Value end
     end
     return 0
 end
@@ -80,35 +78,12 @@ local function getCurrentMoney()
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
     if leaderstats then
         local cash = leaderstats:FindFirstChild("Cash") or leaderstats:FindFirstChild("Money")
-        if cash then
-            return cash.Value
-        end
+        if cash then return cash.Value end
     end
     return 0
 end
 
--- ===================== ATUALIZAÇÃO DOS GANHOS (COM INICIALIZAÇÃO) =====================
-local function initializeGains()
-    -- Se os valores iniciais ainda não foram salvos, salva agora
-    if gains.initialRank == nil then
-        gains.initialRank = getCurrentRank()
-        gains.initialMoney = getCurrentMoney()
-        gains.startTime = tick()
-        saveGains()
-        print("[Persist] Valores iniciais salvos: Rank=" .. gains.initialRank .. ", Money=" .. gains.initialMoney)
-    end
-end
-
-local function updateGains()
-    local currentRank = getCurrentRank()
-    local currentMoney = getCurrentMoney()
-    gains.totalLevelGain = currentRank - gains.initialRank
-    gains.totalMoneyGain = currentMoney - gains.initialMoney
-    saveGains()
-    return gains.totalLevelGain, gains.totalMoneyGain
-end
-
--- ===================== GUI =====================
+-- ===================== GUI DE GANHOS =====================
 local function createGainsGUI()
     local GUI_NAME = "GainsGUI_MadCity"
     local oldGui = LocalPlayer.PlayerGui:FindFirstChild(GUI_NAME)
@@ -173,7 +148,6 @@ end
 
 -- ===================== MOVIMENTO (TWEEN) =====================
 local function disableCollision(char)
-    if not char then return end
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             part.CanCollide = false
@@ -210,7 +184,7 @@ local function descer(root, posFinal)
     moverPara(root, posFinal, dist / VEL_DESCIDA)
 end
 
--- ===================== AÇÕES =====================
+-- ===================== AÇÕES DE TIME E TECLAS =====================
 local function joinPolice()
     local RemoteFunction = game:GetService("ReplicatedStorage"):FindFirstChild("RemoteFunction")
     if RemoteFunction then
@@ -224,6 +198,7 @@ local function selectSlot3()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+        print("[Auto] Tecla '3' pressionada")
     end)
 end
 
@@ -235,7 +210,7 @@ local function segurarTeclaE()
     end)
 end
 
--- ===================== DETECÇÃO =====================
+-- ===================== DETECÇÃO E PERSEGUIÇÃO =====================
 local function isCriminal(player)
     if player == LocalPlayer then return false end
     return player.Team and player.Team.Name == "Criminals"
@@ -264,7 +239,6 @@ local function getNearestCriminal()
     return nearest, nearestDist
 end
 
--- ===================== PERSEGUIÇÃO =====================
 local function perseguirCriminoso(criminal)
     local char = LocalPlayer.Character
     if not char then return false end
@@ -273,9 +247,11 @@ local function perseguirCriminoso(criminal)
 
     print("[Auto] Perseguindo " .. criminal.Name)
 
+    -- Subir
     subir(root)
     task.wait(0.1)
 
+    -- Voo horizontal (segue o alvo)
     repeat
         if not criminal.Character then return false end
         local targetRoot = criminal.Character:FindFirstChild("HumanoidRootPart")
@@ -288,23 +264,27 @@ local function perseguirCriminoso(criminal)
         end
     until not criminal.Character or not isCriminal(criminal)
 
+    -- Descer
     if not criminal.Character then return false end
     local targetRoot = criminal.Character:FindFirstChild("HumanoidRootPart")
     if not targetRoot then return false end
     descer(root, targetRoot.Position + Vector3.new(0, 2, 0))
     task.wait(0.1)
 
+    -- Grudar + prender (E)
     local inicio = tick()
     local ultimoPrende = 0
     while isCriminal(criminal) and tick() - inicio < TEMPO_GRUDE_MAX do
         if not criminal.Character then break end
         local tr = criminal.Character:FindFirstChild("HumanoidRootPart")
         if not tr then break end
-        root.CFrame = CFrame.new(tr.Position + Vector3.new(0, 1.5, 1.5))
+        local posAlvo = tr.Position + Vector3.new(0, 1.5, 1.5)
+        root.CFrame = CFrame.new(posAlvo)
 
-        if tick() - ultimoPrende >= INTERVALO_PRENDE then
+        local agora = tick()
+        if agora - ultimoPrende >= INTERVALO_PRENDE then
             segurarTeclaE()
-            ultimoPrende = tick()
+            ultimoPrende = agora
         end
         task.wait(0.1)
     end
@@ -312,7 +292,7 @@ local function perseguirCriminoso(criminal)
     if not isCriminal(criminal) then
         print("[Auto] " .. criminal.Name .. " foi preso!")
     else
-        print("[Auto] Tempo esgotado para " .. criminal.Name)
+        print("[Auto] Tempo de perseguição esgotado para " .. criminal.Name)
     end
     return true
 end
@@ -327,51 +307,39 @@ local function serverHop()
 
     print("[Hop] Apenas " .. count .. " criminoso(s). Trocando de servidor...")
     saveGains()
+    -- O Loader na pasta AutoExec reexecutará este script automaticamente (e o wait de 6s no início vai garantir o carregamento)
     game:GetService("TeleportService"):Teleport(game.PlaceId)
     return true
 end
 
--- ===================== INICIALIZAÇÃO ROBUSTA (ESPERA O JOGO CARREGAR) =====================
-print("[Auto] Aguardando carregamento do jogo...")
-task.wait(TEMPO_ESPERA_CARREGAR)  -- espera 6 segundos para o jogo estabilizar
-
--- Aguarda o personagem existir
-local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
--- Aguarda o HumanoidRootPart
-local rootPart = character:WaitForChild("HumanoidRootPart", 10)
--- Aguarda leaderstats (pode demorar mais alguns segundos)
-local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-if not leaderstats then
-    leaderstats = LocalPlayer:WaitForChild("leaderstats", 10)
-end
-
-print("[Auto] Jogo carregado. Iniciando...")
-
--- Carregar ganhos salvos
+-- ===================== INICIALIZAÇÃO E LOOP PRINCIPAL =====================
+-- Carregar ganhos anteriores
 loadGains()
 
--- Se os valores iniciais ainda não foram definidos (primeira execução), define agora
-if gains.initialRank == nil then
-    gains.initialRank = getCurrentRank()
-    gains.initialMoney = getCurrentMoney()
-    gains.startTime = tick()
-    saveGains()
-    print("[Persist] Primeira execução. Valores iniciais: Rank=" .. gains.initialRank .. ", Money=" .. gains.initialMoney)
-end
-
--- Criar GUI
-local gui = createGainsGUI()
+-- Valores iniciais para cálculo de ganhos
+local initialRank = getCurrentRank()
+local initialMoney = getCurrentMoney()
+local totalLevelGain = gains.totalLevelGain
+local totalMoneyGain = gains.totalMoneyGain
 local startTime = gains.startTime
 
--- Loop de atualização do GUI
+-- Criar GUI e atualizar em loop
+local gui = createGainsGUI()
 spawn(function()
     while true do
-        local levelGain, moneyGain = updateGains()
+        local currentRank = getCurrentRank()
+        local currentMoney = getCurrentMoney()
+        totalLevelGain = gains.totalLevelGain + (currentRank - initialRank)
+        totalMoneyGain = gains.totalMoneyGain + (currentMoney - initialMoney)
+        gains.totalLevelGain = totalLevelGain
+        gains.totalMoneyGain = totalMoneyGain
+        saveGains()
+
         if gui.levelLabel then
-            gui.levelLabel.Text = "⭐ Nível ganho: +" .. levelGain
+            gui.levelLabel.Text = "⭐ Nível ganho: +" .. totalLevelGain
         end
         if gui.moneyLabel then
-            gui.moneyLabel.Text = "💰 Dinheiro ganho: +$" .. moneyGain
+            gui.moneyLabel.Text = "💰 Dinheiro ganho: +$" .. totalMoneyGain
         end
         if gui.uptimeLabel then
             local elapsed = tick() - startTime
@@ -383,16 +351,17 @@ spawn(function()
     end
 end)
 
--- Desabilitar colisão
+-- Aguardar personagem e desabilitar colisão
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 disableCollision(character)
 
--- Entrar na polícia e selecionar slot 3
+-- Configurar time e slot 3
 joinPolice()
 task.wait(0.5)
 selectSlot3()
 task.wait(0.5)
 
-print("[Auto] Patrulha iniciada. Server hop ativo (min criminosos: " .. MIN_CRIMINOSOS .. ")")
+print("[Auto] Iniciado. Movimento Tween, segura E por " .. TEMPO_SEGURAR_E .. "s. Server hop ativo (min criminosos: " .. MIN_CRIMINOSOS .. ")")
 
 -- Verificador periódico de quantidade de criminosos
 spawn(function()
@@ -416,6 +385,7 @@ while true do
         print("[Auto] Alvo: " .. criminal.Name .. " (distância " .. math.floor(dist) .. ")")
         perseguirCriminoso(criminal)
     else
+        print("[Auto] Nenhum criminoso. Aguardando...")
         task.wait(1)
     end
 end
