@@ -12,7 +12,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 -- ===================== ESPERA INICIAL (RESOLVE O CARREGAMENTO APÓS SERVER HOP) =====================
 print("[Auto] Aguardando 6 segundos para carregamento completo do servidor...")
-task.wait(6)
+task.wait(10)
 print("[Auto] Continuando...")
 
 -- ===================== CONFIGURAÇÕES =====================
