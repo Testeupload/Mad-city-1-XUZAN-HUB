@@ -1,8 +1,9 @@
 --[[
-    AUTO-POLICIAL MAD CITY - VERSÃO FINAL (COM ESPERA INICIAL)
-    - Aguarda 6 segundos antes de iniciar (para carregamento após server hop)
-    - Todo o resto permanece idêntico à versão que funciona.
+    Mad City Chapter 1 - Auto Police (Server Hop + 6 segundos delay)
 --]]
+
+-- Espera o jogo carregar completamente (Essencial!)
+task.wait(6)
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -10,19 +11,14 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- ===================== ESPERA INICIAL (RESOLVE O CARREGAMENTO APÓS SERVER HOP) =====================
-print("[Auto] Aguardando 6 segundos para carregamento completo do servidor...")
-task.wait(10)
-print("[Auto] Continuando...")
-
 -- ===================== CONFIGURAÇÕES =====================
 local ALTURA_VOO = 200
 local VEL_VOO = 300
 local VEL_SUBIDA = 150
 local VEL_DESCIDA = 120
 local TEMPO_GRUDE_MAX = 5
-local INTERVALO_PRENDE = 0.8      -- a cada 0.8s tenta prender
-local TEMPO_SEGURAR_E = 0.5       -- segura E por 0.5s
+local INTERVALO_PRENDE = 0.8
+local TEMPO_SEGURAR_E = 0.5
 local MIN_CRIMINOSOS = 3
 local CHECK_INTERVAL = 30
 
@@ -307,16 +303,13 @@ local function serverHop()
 
     print("[Hop] Apenas " .. count .. " criminoso(s). Trocando de servidor...")
     saveGains()
-    -- O Loader na pasta AutoExec reexecutará este script automaticamente (e o wait de 6s no início vai garantir o carregamento)
     game:GetService("TeleportService"):Teleport(game.PlaceId)
     return true
 end
 
 -- ===================== INICIALIZAÇÃO E LOOP PRINCIPAL =====================
--- Carregar ganhos anteriores
 loadGains()
 
--- Valores iniciais para cálculo de ganhos
 local initialRank = getCurrentRank()
 local initialMoney = getCurrentMoney()
 local totalLevelGain = gains.totalLevelGain
@@ -335,12 +328,8 @@ spawn(function()
         gains.totalMoneyGain = totalMoneyGain
         saveGains()
 
-        if gui.levelLabel then
-            gui.levelLabel.Text = "⭐ Nível ganho: +" .. totalLevelGain
-        end
-        if gui.moneyLabel then
-            gui.moneyLabel.Text = "💰 Dinheiro ganho: +$" .. totalMoneyGain
-        end
+        if gui.levelLabel then gui.levelLabel.Text = "⭐ Nível ganho: +" .. totalLevelGain end
+        if gui.moneyLabel then gui.moneyLabel.Text = "💰 Dinheiro ganho: +$" .. totalMoneyGain end
         if gui.uptimeLabel then
             local elapsed = tick() - startTime
             local minutes = math.floor(elapsed / 60)
